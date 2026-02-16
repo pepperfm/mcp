@@ -79,7 +79,7 @@ Add this to `~/.codex/config.toml`:
 ```toml
 [mcp_servers.telegraph_docs]
 command = "/ABS/PATH/TO/bun"
-cwd = "/ABS/PATH/TO/repo-docs-mcp-bun"
+cwd = "/ABS/PATH/TO/mcp-repo-docs"
 args = ["run", "build/index.js"]
 
 [mcp_servers.telegraph_docs.env]
@@ -91,7 +91,7 @@ MCP_REPO_LABEL = "defstudio/telegraph"
 
 [mcp_servers.laravel_data_docs]
 command = "/ABS/PATH/TO/bun"
-cwd = "/ABS/PATH/TO/repo-docs-mcp-bun"
+cwd = "/ABS/PATH/TO/mcp-repo-docs"
 args = ["run", "build/index.js"]
 
 [mcp_servers.laravel_data_docs.env]

@@ -3,7 +3,7 @@
 
 [mcp_servers.telegraph_docs]
 command = "/ABS/PATH/TO/bun"
-cwd = "/ABS/PATH/TO/repo-docs-mcp-bun"
+cwd = "/ABS/PATH/TO/mcp-repo-docs"
 args = ["run", "build/index.js"]
 startup_timeout_sec = 20
 tool_timeout_sec = 90
@@ -17,7 +17,7 @@ MCP_REPO_LABEL = "defstudio/telegraph"
 
 [mcp_servers.laravel_data_docs]
 command = "/ABS/PATH/TO/bun"
-cwd = "/ABS/PATH/TO/repo-docs-mcp-bun"
+cwd = "/ABS/PATH/TO/mcp-repo-docs"
 args = ["run", "build/index.js"]
 startup_timeout_sec = 20
 tool_timeout_sec = 90

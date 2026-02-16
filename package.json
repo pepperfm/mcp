@@ -1,21 +1,23 @@
 {
-  "name": "repo-docs-mcp-bun",
+  "name": "mcp-repo-docs",
   "version": "0.2.0",
   "private": true,
   "type": "module",
-  "description": "Generic MCP stdio server that exposes a local repository's docs + code (Bun-friendly)",
+  "description": "Generic MCP server (stdio + Streamable HTTP) that exposes a local repository's docs + code (Bun-friendly)",
   "keywords": ["mcp", "bun", "stdio", "docs", "repository"],
   "license": "MIT",
   "scripts": {
     "dev": "bun run src/index.ts",
     "build": "bunx tsc -p tsconfig.json",
-    "start": "bun run build/index.js"
+    "start": "bun run build/index.js",
+    "start:http": "bun run build/http.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.26.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@types/bun": "^1.2.0",
     "@types/node": "^20.11.30",
     "typescript": "^5.4.5"
   }
