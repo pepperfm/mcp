@@ -1,0 +1,29 @@
+# Example: ~/.codex/config.toml
+# One codebase, two MCP server instances.
+
+[mcp_servers.telegraph_docs]
+command = "/ABS/PATH/TO/bun"
+cwd = "/ABS/PATH/TO/repo-docs-mcp-bun"
+args = ["run", "build/index.js"]
+startup_timeout_sec = 20
+tool_timeout_sec = 90
+
+[mcp_servers.telegraph_docs.env]
+MCP_REPO_ROOT = "/ABS/PATH/TO/telegraph"
+MCP_TOOL_PREFIX = "telegraph"
+MCP_URI_SCHEME = "telegraph"
+MCP_REPO_LABEL = "defstudio/telegraph"
+
+
+[mcp_servers.laravel_data_docs]
+command = "/ABS/PATH/TO/bun"
+cwd = "/ABS/PATH/TO/repo-docs-mcp-bun"
+args = ["run", "build/index.js"]
+startup_timeout_sec = 20
+tool_timeout_sec = 90
+
+[mcp_servers.laravel_data_docs.env]
+MCP_REPO_ROOT = "/ABS/PATH/TO/laravel-data"
+MCP_TOOL_PREFIX = "laravel_data"
+MCP_URI_SCHEME = "laravel-data"
+MCP_REPO_LABEL = "spatie/laravel-data"
