@@ -2,7 +2,7 @@
   "mcpServers": {
     "telegraph-docs": {
       "command": "bun",
-      "args": ["/ABSOLUTE/PATH/TO/mcp-repo-docs/build/index.js"],
+      "args": ["/ABSOLUTE/PATH/TO/mcp/build/index.js"],
       "env": {
         "MCP_REPO_ROOT": "/ABSOLUTE/PATH/TO/telegraph",
         "MCP_TOOL_PREFIX": "telegraph",
@@ -12,7 +12,7 @@
     },
     "laravel-data-docs": {
       "command": "bun",
-      "args": ["/ABSOLUTE/PATH/TO/mcp-repo-docs/build/index.js"],
+      "args": ["/ABSOLUTE/PATH/TO/mcp/build/index.js"],
       "env": {
         "MCP_REPO_ROOT": "/ABSOLUTE/PATH/TO/laravel-data",
         "MCP_TOOL_PREFIX": "laravel_data",
