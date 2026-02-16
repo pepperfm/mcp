@@ -324,10 +324,18 @@ export function runGitFetch(): Promise<{ ok: boolean; code: number | null; stdou
 
 // ---- MCP server ----
 
-export const server = new McpServer({
-  name: SERVER_NAME,
-  version: SERVER_VERSION,
-});
+export function createServer(): McpServer {
+  const server = new McpServer({
+    name: SERVER_NAME,
+    version: SERVER_VERSION,
+  });
+
+  registerAll(server);
+
+  return server;
+}
+
+function registerAll(server: McpServer): void {
 
 /**
  * TOOLS
@@ -681,6 +689,8 @@ server.registerPrompt(
     };
   }
 );
+
+}
 
 export function logStartup(transportLabel: string): void {
   console.error(`${SERVER_NAME} MCP server running (${transportLabel})`);
