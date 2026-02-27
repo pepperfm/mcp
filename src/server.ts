@@ -55,6 +55,7 @@ const REPO_LABEL = (process.env.MCP_REPO_LABEL ?? path.basename(REPO_ROOT) ?? TO
 
 const DOCS_DIR = (process.env.MCP_DOCS_DIR ?? "docs").trim();
 const DOCS_EXTS = parseCommaList(process.env.MCP_DOCS_EXTS, [".md", ".mdx"]).map((e) => e.startsWith(".") ? e.toLowerCase() : `.${e.toLowerCase()}`);
+const DOCS_DISCOVERY_DEPTH = Math.max(0, Number(process.env.MCP_DOCS_DISCOVERY_DEPTH ?? 3));
 
 const CODE_DIRS = parseCommaList(process.env.MCP_CODE_DIRS, ["src", "config", "routes", "database", "resources", "tests"]).map((d) => d.trim()).filter(Boolean);
 const CODE_EXTS = parseCommaList(process.env.MCP_CODE_EXTS, [".php", ".md", ".json", ".yml", ".yaml", ".xml", ".ts", ".js"]).map((e) => e.startsWith(".") ? e.toLowerCase() : `.${e.toLowerCase()}`);
@@ -78,9 +79,11 @@ function uri(pathPart: string): string {
 
 // ---- Helpers (filesystem) ----
 
-type DocMeta = { slug: string; relPath: string; title?: string };
+type DocMeta = { slug: string; relPath: string; repoPath: string; docsRoot: string; title?: string };
 let docIndex: DocMeta[] | null = null;
-let slugToRelPath: Map<string, string> | null = null;
+let slugToRepoPath: Map<string, string> | null = null;
+let relPathToRepoPath: Map<string, string> | null = null;
+let docsRootsCache: string[] | null = null;
 
 function stripOrderingPrefix(segment: string): string {
   // Remove ordering prefixes like:
@@ -148,6 +151,117 @@ function safeJoin(root: string, rel: string): string {
   return resolved;
 }
 
+function normalizeRelPath(rel: string): string {
+  return rel.replace(/\\/g, "/").replace(/^\/+/, "").trim();
+}
+
+function hasPathSeparator(value: string): boolean {
+  return value.includes("/") || value.includes("\\");
+}
+
+function getDocsRootPrefix(docsRoot: string): string {
+  const normalized = normalizeRelPath(docsRoot);
+  if (normalized === DOCS_DIR) {
+    return "";
+  }
+
+  if (path.basename(normalized) === DOCS_DIR) {
+    const dir = path.dirname(normalized).replace(/\\/g, "/");
+    return dir === "." ? "" : dir;
+  }
+
+  return "";
+}
+
+function combineSlug(prefix: string, slug: string): string {
+  if (!prefix) {
+    return slug;
+  }
+
+  if (!slug) {
+    return prefix;
+  }
+
+  return `${prefix}/${slug}`.replace(/\/+/g, "/");
+}
+
+export async function discoverDocsDirs(repoRoot: string, docsDirName: string, maxDepth: number): Promise<string[]> {
+  if (maxDepth <= 0) {
+    return [];
+  }
+
+  if (hasPathSeparator(docsDirName)) {
+    return [];
+  }
+
+  const found = new Set<string>();
+
+  async function rec(currentAbs: string, currentRel: string, depth: number): Promise<void> {
+    if (depth >= maxDepth) {
+      return;
+    }
+
+    let entries: Dirent[];
+    try {
+      entries = await fs.readdir(currentAbs, { withFileTypes: true });
+    } catch {
+      return;
+    }
+
+    for (const entry of entries) {
+      if (!entry.isDirectory()) {
+        continue;
+      }
+
+      if (entry.name === ".git" || entry.name === "node_modules" || entry.name === "vendor") {
+        continue;
+      }
+
+      const nextRel = currentRel ? `${currentRel}/${entry.name}` : entry.name;
+      const nextDepth = nextRel.split("/").length;
+
+      if (entry.name === docsDirName && nextDepth <= maxDepth) {
+        found.add(nextRel);
+      }
+
+      if (nextDepth < maxDepth) {
+        await rec(path.join(currentAbs, entry.name), nextRel, nextDepth);
+      }
+    }
+  }
+
+  await rec(repoRoot, "", 0);
+
+  return Array.from(found).sort();
+}
+
+async function resolveDocsRoots(): Promise<string[]> {
+  if (docsRootsCache) {
+    return docsRootsCache;
+  }
+
+  const roots = new Set<string>([DOCS_DIR]);
+
+  if (DOCS_DISCOVERY_DEPTH > 0 && !hasPathSeparator(DOCS_DIR)) {
+    const discovered = await discoverDocsDirs(REPO_ROOT, DOCS_DIR, DOCS_DISCOVERY_DEPTH);
+    for (const rel of discovered) {
+      roots.add(rel);
+    }
+  }
+
+  const valid: string[] = [];
+  for (const rel of roots) {
+    const abs = safeJoin(REPO_ROOT, rel);
+    const st = await fs.stat(abs).catch(() => null);
+    if (st?.isDirectory()) {
+      valid.push(normalizeRelPath(rel));
+    }
+  }
+
+  docsRootsCache = valid.sort();
+  return docsRootsCache;
+}
+
 async function walkFiles(dirAbs: string, filter: (abs: string) => boolean): Promise<string[]> {
   const out: string[] = [];
 
@@ -191,49 +305,52 @@ async function readTextFile(absPath: string, maxChars = DEFAULT_MAX_CHARS): Prom
 }
 
 async function buildDocIndex(): Promise<DocMeta[]> {
-  if (docIndex && slugToRelPath) return docIndex;
-
-  const docsDirAbs = safeJoin(REPO_ROOT, DOCS_DIR);
-
-  // If docs directory doesn't exist, just index empty.
-  let st: any;
-  try {
-    st = await fs.stat(docsDirAbs);
-  } catch {
-    docIndex = [];
-    slugToRelPath = new Map();
-    return docIndex;
-  }
-  if (!st.isDirectory()) {
-    docIndex = [];
-    slugToRelPath = new Map();
+  if (docIndex && slugToRepoPath && relPathToRepoPath) {
     return docIndex;
   }
 
-  const files = await walkFiles(docsDirAbs, (abs) => DOCS_EXTS.some((e) => abs.toLowerCase().endsWith(e)));
-
+  const roots = await resolveDocsRoots();
   const metas: DocMeta[] = [];
-  const map = new Map<string, string>();
+  const slugMap = new Map<string, string>();
+  const relPathMap = new Map<string, string>();
 
-  for (const abs of files) {
-    const rel = path.relative(docsDirAbs, abs).replace(/\\/g, "/");
-    const slug = inferSlugFromDocRelPath(rel);
+  for (const docsRoot of roots) {
+    const docsDirAbs = safeJoin(REPO_ROOT, docsRoot);
+    const files = await walkFiles(docsDirAbs, (abs) => DOCS_EXTS.some((e) => abs.toLowerCase().endsWith(e)));
+    const prefix = getDocsRootPrefix(docsRoot);
 
-    let title: string | undefined;
-    try {
-      const head = await readTextFile(abs, 10_000);
-      title = extractTitleFromFrontmatter(head);
-    } catch {
-      // ignore
+    for (const abs of files) {
+      const relPath = path.relative(docsDirAbs, abs).replace(/\\/g, "/");
+      const repoPath = path.relative(REPO_ROOT, abs).replace(/\\/g, "/");
+      const baseSlug = inferSlugFromDocRelPath(relPath);
+      const slug = combineSlug(prefix, baseSlug);
+
+      let title: string | undefined;
+      try {
+        const head = await readTextFile(abs, 10_000);
+        title = extractTitleFromFrontmatter(head);
+      } catch {
+        // ignore
+      }
+
+      metas.push({ slug, relPath, repoPath, docsRoot, title });
+
+      if (!slugMap.has(slug)) {
+        slugMap.set(slug, repoPath);
+      }
+
+      const normalizedRelPath = normalizeRelPath(relPath);
+      if (!relPathMap.has(normalizedRelPath)) {
+        relPathMap.set(normalizedRelPath, repoPath);
+      }
+      relPathMap.set(normalizeRelPath(repoPath), repoPath);
     }
-
-    metas.push({ slug, relPath: rel, title });
-    map.set(slug, rel);
   }
 
   metas.sort((a, b) => a.slug.localeCompare(b.slug));
   docIndex = metas;
-  slugToRelPath = map;
+  slugToRepoPath = slugMap;
+  relPathToRepoPath = relPathMap;
   return metas;
 }
 
@@ -369,7 +486,7 @@ server.registerTool(
   toolName("list_docs"),
   {
     title: `${REPO_LABEL}: list docs`,
-    description: `List documentation pages under ${DOCS_DIR}/ as \"slug -> file\" (slug inferred from file path).`,
+    description: `List documentation pages under docs roots (base: ${DOCS_DIR}, optional discovery depth) as \"slug -> file\".`,
     inputSchema: {
       contains: z.string().optional().describe("Optional substring filter (matches slug/title)."),
       max: z.number().int().min(1).max(2000).optional().describe("Max items, default 200."),
@@ -399,10 +516,10 @@ server.registerTool(
   toolName("get_doc"),
   {
     title: `${REPO_LABEL}: get doc page`,
-    description: "Get a doc page by slug (preferred) or relPath (relative to docs dir).",
+    description: "Get a doc page by slug (preferred) or relPath (relative docs path or repo-relative docs path).",
     inputSchema: {
       slug: z.string().optional().describe("Doc slug, e.g. webhooks/overview or introduction"),
-      relPath: z.string().optional().describe(`Relative path inside ${DOCS_DIR}/, e.g. guide/overview.md`),
+      relPath: z.string().optional().describe(`Path like guide/overview.md or docs/guide/overview.md`),
       maxChars: z.number().int().min(1000).max(250000).optional().describe("Max chars to return."),
     },
   },
@@ -413,15 +530,29 @@ server.registerTool(
       }
 
       await buildDocIndex();
-      const map = slugToRelPath ?? new Map();
+      const slugMap = slugToRepoPath ?? new Map();
+      const relMap = relPathToRepoPath ?? new Map();
 
-      const rel = relPath ?? (slug ? map.get(slug) : undefined);
-      if (!rel) {
+      let repoPath: string | undefined;
+
+      if (relPath) {
+        const normalizedRel = normalizeRelPath(relPath);
+        const directAbs = safeJoin(REPO_ROOT, normalizedRel);
+        const directStat = await fs.stat(directAbs).catch(() => null);
+        if (directStat?.isFile()) {
+          repoPath = normalizedRel;
+        } else {
+          repoPath = relMap.get(normalizedRel);
+        }
+      } else if (slug) {
+        repoPath = slugMap.get(slug);
+      }
+
+      if (!repoPath) {
         return { isError: true, content: [{ type: "text", text: `Not found: ${slug ?? relPath}` }] };
       }
 
-      const docsDirAbs = safeJoin(REPO_ROOT, DOCS_DIR);
-      const abs = safeJoin(docsDirAbs, rel);
+      const abs = safeJoin(REPO_ROOT, repoPath);
       const raw = await readTextFile(abs, maxChars ?? DEFAULT_MAX_CHARS);
       const cleaned = cleanDocText(raw);
 
@@ -439,7 +570,7 @@ server.registerTool(
   toolName("search_docs"),
   {
     title: `${REPO_LABEL}: search docs`,
-    description: `Search a text query inside ${DOCS_DIR}/ files.`,
+    description: `Search a text query inside docs roots (base: ${DOCS_DIR}, optional discovery depth).`,
     inputSchema: {
       query: z.string().min(2).describe("Search query"),
       maxResults: z.number().int().min(1).max(500).optional().describe("Max results, default 20."),
@@ -447,8 +578,20 @@ server.registerTool(
   },
   async ({ query, maxResults }) => {
     try {
-      const docsDirAbs = safeJoin(REPO_ROOT, DOCS_DIR);
-      const results = await searchInFiles(docsDirAbs, DOCS_EXTS, query, maxResults ?? 20);
+      const roots = await resolveDocsRoots();
+      const limit = maxResults ?? 20;
+      const results: Array<{ file: string; line: number; snippet: string }> = [];
+
+      for (const root of roots) {
+        if (results.length >= limit) {
+          break;
+        }
+
+        const docsDirAbs = safeJoin(REPO_ROOT, root);
+        const chunk = await searchInFiles(docsDirAbs, DOCS_EXTS, query, limit - results.length);
+        results.push(...chunk);
+      }
+
       return { content: [{ type: "text", text: JSON.stringify(results, null, 2) }] };
     } catch (err: any) {
       return {
@@ -473,12 +616,15 @@ server.registerTool(
   async ({ query, maxResults, includeDocs }) => {
     try {
       const dirs = [...CODE_DIRS];
-      if (includeDocs) dirs.push(DOCS_DIR);
+      if (includeDocs) {
+        dirs.push(...(await resolveDocsRoots()));
+      }
+      const uniqueDirs = Array.from(new Set(dirs));
 
       const collected: Array<{ file: string; line: number; snippet: string }> = [];
       const limit = maxResults ?? 30;
 
-      for (const d of dirs) {
+      for (const d of uniqueDirs) {
         if (collected.length >= limit) break;
 
         const dirAbs = safeJoin(REPO_ROOT, d);
@@ -508,7 +654,9 @@ server.registerTool(
   },
   async () => {
     docIndex = null;
-    slugToRelPath = null;
+    slugToRepoPath = null;
+    relPathToRepoPath = null;
+    docsRootsCache = null;
     const metas = await buildDocIndex();
     return { content: [{ type: "text", text: `OK: indexed ${metas.length} doc files` }] };
   }
@@ -545,11 +693,12 @@ server.registerTool(
     inputSchema: {},
   },
   async () => {
+    const docsRoots = await resolveDocsRoots();
     const info = {
       server: { name: SERVER_NAME, version: SERVER_VERSION },
       repo: { root: REPO_ROOT, label: REPO_LABEL },
       naming: { toolPrefix: TOOL_PREFIX, uriScheme: URI_SCHEME },
-      docs: { dir: DOCS_DIR, exts: DOCS_EXTS },
+      docs: { dir: DOCS_DIR, exts: DOCS_EXTS, discoveryDepth: DOCS_DISCOVERY_DEPTH, roots: docsRoots },
       codeSearch: { dirs: CODE_DIRS, exts: CODE_EXTS },
       limits: { maxFileBytes: MAX_FILE_BYTES, defaultMaxChars: DEFAULT_MAX_CHARS },
       git: { autoFetchOnStart: AUTO_GIT_FETCH },
@@ -636,16 +785,15 @@ server.registerResource(
   { title: `${REPO_LABEL} doc page`, mimeType: "text/markdown" },
   async (resourceUri, { slug }) => {
     await buildDocIndex();
-    const rel = (slugToRelPath ?? new Map()).get(String(slug));
+    const repoPath = (slugToRepoPath ?? new Map()).get(String(slug));
 
-    if (!rel) {
+    if (!repoPath) {
       return {
         contents: [{ uri: String(resourceUri), mimeType: "text/plain", text: `Not found: ${String(slug)}` }],
       };
     }
 
-    const docsDirAbs = safeJoin(REPO_ROOT, DOCS_DIR);
-    const abs = safeJoin(docsDirAbs, rel);
+    const abs = safeJoin(REPO_ROOT, repoPath);
     const raw = await readTextFile(abs);
     const text = cleanDocText(raw);
 
@@ -698,6 +846,7 @@ export function logStartup(transportLabel: string): void {
   console.error(`MCP_TOOL_PREFIX=${TOOL_PREFIX}`);
   console.error(`MCP_URI_SCHEME=${URI_SCHEME}`);
   console.error(`MCP_DOCS_DIR=${DOCS_DIR}`);
+  console.error(`MCP_DOCS_DISCOVERY_DEPTH=${DOCS_DISCOVERY_DEPTH}`);
 }
 
 export function maybeAutoGitFetch(): void {

@@ -57,6 +57,7 @@ Optional:
 - `MCP_URI_SCHEME` — resource URI scheme (default: derived from tool prefix)
 - `MCP_REPO_LABEL` — text label used in the prompt (default: basename of repo root)
 - `MCP_DOCS_DIR` — docs directory relative to repo root (default: `docs`)
+- `MCP_DOCS_DISCOVERY_DEPTH` — if `> 0` and `MCP_DOCS_DIR` is a plain folder name, auto-discovers matching docs dirs up to this depth (default: `3`)
 - `MCP_DOCS_EXTS` — comma-separated docs extensions (default: `.md,.mdx`)
 - `MCP_CODE_DIRS` — comma-separated dirs to search for code (default: `src,config,routes,database,resources,tests`)
 - `MCP_CODE_EXTS` — comma-separated extensions for code search (default: `.php,.md,.json,.yml,.yaml,.xml,.ts,.js`)
@@ -109,3 +110,4 @@ See `claude_desktop_config.example.json`.
 
 - Docs slugs are inferred from file paths (ordering prefixes like `01.`, `01-`, `01_` are stripped).
 - If a doc file is `index.md` inside a folder, the slug is the folder name (e.g. `guide/index.md` → `guide`).
+- With `MCP_DOCS_DISCOVERY_DEPTH > 0`, nested docs like `packages/*/docs` are indexed too, and their slugs get a prefix (e.g. `packages/actions/...`).
